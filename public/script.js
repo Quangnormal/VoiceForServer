@@ -1,13 +1,14 @@
 const socket = io();
 let localStream;
 let peers = {};
+let isMakingOffer = {};
+let polite = {};
 
 async function join() {
   const username = document.getElementById("username").value;
   if (!username) return;
 
   localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
   socket.emit("join", username);
 }
 
@@ -16,22 +17,25 @@ function createPeerConnection(id) {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
   });
 
+  peers[id] = pc;
+  isMakingOffer[id] = false;
+
   localStream.getTracks().forEach(track => {
     pc.addTrack(track, localStream);
   });
 
-  pc.onicecandidate = event => {
-    if (event.candidate) {
+  pc.onicecandidate = e => {
+    if (e.candidate) {
       socket.emit("ice-candidate", {
-        candidate: event.candidate,
-        to: id
+        to: id,
+        candidate: e.candidate
       });
     }
   };
 
-  pc.ontrack = event => {
+  pc.ontrack = e => {
     const audio = document.createElement("audio");
-    audio.srcObject = event.streams[0];
+    audio.srcObject = e.streams[0];
     audio.autoplay = true;
     document.body.appendChild(audio);
   };
@@ -39,40 +43,37 @@ function createPeerConnection(id) {
   return pc;
 }
 
-/* ===== Khi join sẽ nhận danh sách user đã có ===== */
-socket.on("existing-users", async (users) => {
-  for (let id of users) {
-    const pc = createPeerConnection(id);
-    peers[id] = pc;
+/* ===== Khi có user mới ===== */
+socket.on("user-joined", async (id) => {
+  polite[id] = false; // người cũ chủ động tạo offer
+  const pc = createPeerConnection(id);
 
+  try {
+    isMakingOffer[id] = true;
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
     socket.emit("offer", {
-      offer: offer,
-      to: id
+      to: id,
+      offer: pc.localDescription
     });
+  } finally {
+    isMakingOffer[id] = false;
   }
-});
-
-/* ===== Khi có user mới vào ===== */
-socket.on("user-joined", async (id) => {
-  const pc = createPeerConnection(id);
-  peers[id] = pc;
-
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-
-  socket.emit("offer", {
-    offer: offer,
-    to: id
-  });
 });
 
 /* ===== Khi nhận offer ===== */
 socket.on("offer", async ({ offer, from }) => {
-  const pc = createPeerConnection(from);
-  peers[from] = pc;
+  polite[from] = true; // người vào sau sẽ polite
+
+  let pc = peers[from];
+  if (!pc) pc = createPeerConnection(from);
+
+  const readyForOffer =
+    !isMakingOffer[from] &&
+    (pc.signalingState === "stable" || pc.signalingState === "have-local-offer");
+
+  if (!readyForOffer) return;
 
   await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
@@ -80,17 +81,17 @@ socket.on("offer", async ({ offer, from }) => {
   await pc.setLocalDescription(answer);
 
   socket.emit("answer", {
-    answer: answer,
-    to: from
+    to: from,
+    answer: pc.localDescription
   });
 });
 
 /* ===== Khi nhận answer ===== */
 socket.on("answer", async ({ answer, from }) => {
-  if (!answer) return;
-
   const pc = peers[from];
   if (!pc) return;
+
+  if (pc.signalingState !== "have-local-offer") return;
 
   await pc.setRemoteDescription(new RTCSessionDescription(answer));
 });
@@ -100,9 +101,9 @@ socket.on("ice-candidate", async ({ candidate, from }) => {
   const pc = peers[from];
   if (!pc) return;
 
-  if (candidate) {
+  try {
     await pc.addIceCandidate(new RTCIceCandidate(candidate));
-  }
+  } catch (e) {}
 });
 
 /* ===== User rời ===== */
@@ -113,7 +114,7 @@ socket.on("user-left", (id) => {
   }
 });
 
-/* ===== Toggle Mic ===== */
+/* ===== Toggle mic ===== */
 function toggleMic() {
   localStream.getAudioTracks().forEach(track => {
     track.enabled = !track.enabled;
