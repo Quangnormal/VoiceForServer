@@ -8,29 +8,50 @@ const io = new Server(server);
 
 app.use(express.static("public"));
 
-let users = {};
+const users = {};
 
 io.on("connection", (socket) => {
 
-    socket.on("join", (username) => {
-        users[socket.id] = username;
-        io.emit("users", users);
-    });
+  socket.on("join", (username) => {
+    users[socket.id] = username;
 
-    socket.on("signal", (data) => {
-        io.to(data.to).emit("signal", {
-            from: socket.id,
-            signal: data.signal
-        });
-    });
+    socket.emit("existing-users",
+      Object.keys(users).filter(id => id !== socket.id)
+    );
 
-    socket.on("disconnect", () => {
-        delete users[socket.id];
-        io.emit("users", users);
-    });
+    socket.broadcast.emit("user-joined", socket.id);
 
+    io.emit("update-users", users);
+  });
+
+  socket.on("offer", (data) => {
+    io.to(data.to).emit("offer", {
+      offer: data.offer,
+      from: socket.id
+    });
+  });
+
+  socket.on("answer", (data) => {
+    io.to(data.to).emit("answer", {
+      answer: data.answer,
+      from: socket.id
+    });
+  });
+
+  socket.on("ice-candidate", (data) => {
+    io.to(data.to).emit("ice-candidate", {
+      candidate: data.candidate,
+      from: socket.id
+    });
+  });
+
+  socket.on("disconnect", () => {
+    delete users[socket.id];
+    socket.broadcast.emit("user-left", socket.id);
+    io.emit("update-users", users);
+  });
 });
 
-server.listen(3000, () => {
-    console.log("Server running on port 3000");
+server.listen(process.env.PORT || 3000, () => {
+  console.log("Server running");
 });
