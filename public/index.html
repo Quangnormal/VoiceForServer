@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Minecraft Voice</title>
+</head>
+<body>
+
+<h2>Minecraft Voice Chat</h2>
+
+<input id="username" placeholder="Enter username">
+<button onclick="join()">Join</button>
+
+<hr>
+
+<button onclick="toggleMic()">Toggle Mic</button>
+
+<h3>Online Users:</h3>
+<ul id="users"></ul>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="script.js"></script>
+
+</body>
+</html>
